@@ -3,8 +3,8 @@
 Agent built with **LangGraph** and **Groq** that automatically extracts
 and validates fiscal values from Argentine invoices in PDF format. It
 processes batches of documents (invoices, debit/credit notes, receipts)
-and returns structured JSON per invoice, including accounting
-validation.
+and returns structured JSON per invoice. It includes an accounting
+validation math to assure the precission of the extracted values by the agent.  
 
 ------------------------------------------------------------------------
 
