@@ -1,10 +1,11 @@
-# 🧾 facturai — Extracción y Validación de Facturas con IA
+# 🧾 facturai — Extraction and Validation of receipts using AI Agents
 
-Agente construido con **LangGraph** y **Groq** que extrae y valida automáticamente los valores fiscales de facturas argentinas en PDF. Procesa lotes de comprobantes (facturas, notas de débito/crédito, recibos) y devuelve un JSON estructurado por factura, con validación matemática incluida.
+Agente construido con **LangGraph** y **Groq** que extrae y valida automáticamente los valores fiscales de facturas argentinas en PDF. Procesa lotes de comprobantes (facturas, notas de débito/crédito, recibos) y devuelve un JSON estructurado por factura, con validación contable para asegurarse mayor precisión en los datos extraidos de la factura.
 
 ---
 
 ## 🎯 ¿Qué problema resuelve?
+Hay dos empleados que 
 
 Cargar facturas manualmente a un sistema contable es lento y propenso a errores. Este agente automatiza la extracción de todos los campos fiscales relevantes para Argentina (netos por alícuota, IVAs, percepciones) y verifica que los números sean matemáticamente consistentes antes de darlo por válido.
 
