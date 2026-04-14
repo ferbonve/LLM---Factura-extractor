@@ -1,9 +1,9 @@
-# 🧾 facturai --- Invoice Extraction and Validation with AI
+# 🧾 facturai --- Invoice values extraction and validation with AI Agent.
 
 Agent built with **LangGraph** and **Groq** that automatically extracts
 and validates fiscal values from Argentine invoices in PDF format. It
 processes batches of documents (invoices, debit/credit notes, receipts)
-and returns structured JSON per invoice, including mathematical
+and returns structured JSON per invoice, including accounting
 validation.
 
 ------------------------------------------------------------------------
