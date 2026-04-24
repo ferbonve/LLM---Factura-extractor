@@ -1,8 +1,13 @@
 # 🧾 Invoice Parser — LLM Ensemble Agent
 
-An **LLM ensemble system** for automatically extracting fiscal data from PDF invoices. Built with **LangGraph**, it runs multiple agents in parallel over multiple text sources and aggregates their outputs — mirroring the classic ensemble approach from ML, applied to information extraction.
+An **LLM ensemble system** for automatically extracting fiscal data from PDF invoices. Built with **LangGraph**, it runs multiple agents in parallel over multiple text sources and aggregates their outputs. It processes batches of documents (invoices, debit/credit notes, receipts)
+and returns structured JSON per invoice.
 
 ---
+
+🎯 What problem does it solve?
+Manually entering invoices into an accounting system is slow and error‑prone. This agent automates extraction of all relevant fiscal fields for Argentina (taxable bases by VAT rate, VAT amounts,
+perceptions) and verifies that numbers are mathematically consistent before marking them as valid.
 
 ## 🏗️ Architecture
 
@@ -11,7 +16,7 @@ An **LLM ensemble system** for automatically extracting fiscal data from PDF inv
 
 ### How the ensemble works
 
-Each invoice goes through **two independent text extraction methods** (pdfplumber + DocTR OCR), producing two versions of the raw text. Three LLM agents — each with a different temperature — then process both versions independently, yielding **up to 6 parallel extractions per invoice**.
+Each invoice goes through **two independent text extraction methods** (pdfplumber + DocTR OCR), producing two versions of the raw text. Three LLM agents (each with a different temperature) then process both versions independently, yielding **up to 6 parallel extractions per invoice**.
 
 ```
 1 PDF  →  2 text sources  ×  3 agents  =  6 independent extractions
@@ -21,18 +26,44 @@ Each invoice goes through **two independent text extraction methods** (pdfplumbe
                                           [Consensus step — v2]
 ```
 
-The temperature variation (0.0 / 0.2 / 0.4) introduces controlled diversity in the agents' outputs, similar to how ensemble methods in ML use multiple models or random seeds to reduce variance and improve robustness.
+The temperature variation (0.0 / 0.2 / 0.4) introduces controlled diversity in the agents outputs, similar to how ensemble methods in ML use multiple models or random seeds to reduce variance and improve robustness.
 
 ---
+
+📊 Output per invoice
+``` python
+{
+  'moneda': 'ARS',
+  'confidence': 'high',
+  'neto_total': 64236.81,
+  'neto_gravado_21': 64236.81,
+  'neto_gravado_1050': None,
+  'neto_gravado_27': None,
+  'no_gravado': None,
+  'iva_21': 13489.73,
+  'iva_1050': None,
+  'iva_27': None,
+  'percepciones_iva': None,
+  'percepciones_ganancias': None,
+  'percepciones_iibb': None,
+  'total': 77726.54,
+  'errores_validacion': [],
+  'valido': True,
+  'FileName': '2026-02-01_..._BONVECCHIATO.pdf'
+}
+```
+---
+
+
 
 ## ✨ Features
 
 - **Dual text extraction**: pdfplumber for embedded-text PDFs + DocTR for spatial OCR
 - **LLM ensemble**: 3 agents × 2 text sources = up to 6 extractions per invoice
 - **Variable temperature**: controlled output diversity across agents
-- **Multimodal agent (Gemini)**: processes the PDF directly as an image, no text extraction needed
+- **Multimodal agent (Gemini)**: processes the PDF directly as an image, no text extraction needed. (future version: adding a fourth Agent with multimodal LLM)
 - **Number normalization**: auto-detects and converts Argentine (`1.234,56`) and US (`1,234.56`) formats
-- **Batch processing**: process entire folders with configurable concurrency
+- **Batch processing**: process entire folders
 - **Excel export**: direct output to `.xlsx`
 
 ---
@@ -93,10 +124,6 @@ groq_api_key = os.environ["GROQ_API_KEY"]
 google_api_key = os.environ["GOOGLE_API_KEY"]
 ```
 
-> ⚠️ **Never hardcode API keys in your source code or commit them to the repository.**
-
----
-
 ## 🚀 Usage
 
 ### Process a single invoice
@@ -141,7 +168,7 @@ results = app.batch(inputs, config={"max_concurrency": 3})
 invoice-parser/
 │
 ├── facturas_parser.py                      # Main script
-├── facturas_parser_system_prompt_v2.txt    # LLM system prompt
+├── facturas_parser_system_prompt_v2.txt    # LLM system prompt. (The same system prompt for each agent. Then I will try adding more agents with different roles to improve accuracy in results. )
 ├── graph.png                               # LangGraph architecture diagram
 ├── README.md
 │
@@ -182,6 +209,15 @@ models = [
 |---|---|---|
 | Groq | LLaMA 3.3 70B, LLaMA 4 Scout, LLaMA 3.1 8B | Text-based extraction (Agents 1–3) |
 | Google Gemini | gemini-2.5-flash | Multimodal extraction directly from PDF (Agent 4) |
+
+🛠️ Stack
+Tool             Role
+---
+LangGraph        Graph‑based agent orchestration
+Groq             High‑speed LLM inference
+LangChain Core   Message types and abstractions
+pdfplumber       PDF text extraction
+pandas           Excel export
 
 ---
 
