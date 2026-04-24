@@ -1,246 +1,205 @@
-# 🧾 facturai --- Invoice values extraction and validation with AI Agents.
+# 🧾 Invoice Parser — LLM Ensemble Agent
 
-Agent built with **LangGraph** and **Groq** that automatically extracts
-and validates fiscal values from Argentine invoices in PDF format. It
-processes batches of documents (invoices, debit/credit notes, receipts)
-and returns structured JSON per invoice. It includes an accounting
-validation math to assure the precission of the extracted values by the agent.  
+An **LLM ensemble system** for automatically extracting fiscal data from PDF invoices. Built with **LangGraph**, it runs multiple agents in parallel over multiple text sources and aggregates their outputs — mirroring the classic ensemble approach from ML, applied to information extraction.
 
-------------------------------------------------------------------------
+---
 
-## 🎯 What problem does it solve?
+## 🏗️ Architecture
 
-Manually entering invoices into an accounting system is slow and
-error‑prone. This agent automates extraction of all relevant fiscal
-fields for Argentina (taxable bases by VAT rate, VAT amounts,
-perceptions) and verifies that numbers are mathematically consistent
-before marking them as valid.
+<!-- Insert your LangGraph graph image here -->
+![LangGraph Architecture](graph.png)
 
-------------------------------------------------------------------------
+### How the ensemble works
 
-## 🏗️ Graph architecture
+Each invoice goes through **two independent text extraction methods** (pdfplumber + DocTR OCR), producing two versions of the raw text. Three LLM agents — each with a different temperature — then process both versions independently, yielding **up to 6 parallel extractions per invoice**.
 
-    START
-      │
-      ▼
-    [.pdf text extractor]   ← Extracts PDF text using pdfplumber
-      │
-      ▼
-    [agent]                 ← Groq LLM + specialized system prompt → fiscal JSON
-      │
-      ▼
-    [validator]             ← Validates mathematical relationships between fields
-      │
-      ▼
-    END
-
-Each node receives and returns the full `AgentState`:
-
-``` python
-class AgentState(TypedDict):
-    messages: Annotated[Sequence[BaseMessage], add_messages]
-    pdf_path: str     # PDF path
-    pdf_text: str     # Extracted text
+```
+1 PDF  →  2 text sources  ×  3 agents  =  6 independent extractions
+                                                      ↓
+                                             Parse + Normalize
+                                                      ↓
+                                          [Consensus step — v2]
 ```
 
-------------------------------------------------------------------------
+The temperature variation (0.0 / 0.2 / 0.4) introduces controlled diversity in the agents' outputs, similar to how ensemble methods in ML use multiple models or random seeds to reduce variance and improve robustness.
 
-## 🧠 The system prompt: the heart of the agent
+---
 
-The file `facturas_parser (system_prompt).txt` defines exactly what the
-LLM must extract and how it should reason. Its pillars are:
+## ✨ Features
 
-### Fiscal fields to extract
+- **Dual text extraction**: pdfplumber for embedded-text PDFs + DocTR for spatial OCR
+- **LLM ensemble**: 3 agents × 2 text sources = up to 6 extractions per invoice
+- **Variable temperature**: controlled output diversity across agents
+- **Multimodal agent (Gemini)**: processes the PDF directly as an image, no text extraction needed
+- **Number normalization**: auto-detects and converts Argentine (`1.234,56`) and US (`1,234.56`) formats
+- **Batch processing**: process entire folders with configurable concurrency
+- **Excel export**: direct output to `.xlsx`
 
-The prompt instructs the model to identify each field by its **meaning
-and tax rate**, not by exact label wording, covering all variants that
-may appear in Argentine documents:
+---
 
-  JSON Field                 Recognized document variants
-  -------------------------- ----------------------------------------
-  `neto_total`               Subtotal, Net amount, Net total...
-  `neto_gravado_21`          Taxable base 21%, Net taxed 21%...
-  `neto_gravado_1050`        Taxable base 10.5%, Net taxed 10.5%...
-  `neto_gravado_27`          Taxable base 27%, Net taxed 27%...
-  `no_gravado`               Non‑taxed, Exempt operations...
-  `iva_21`                   VAT 21%
-  `iva_1050`                 VAT 10.5%
-  `iva_27`                   VAT 27%
-  `percepciones_iva`         VAT perception
-  `percepciones_ganancias`   Income tax perception
-  `percepciones_iibb`        Gross income perception
-  `total`                    Total amount payable
+## 📋 Extracted Fields
 
-### Mathematical rules the LLM must respect
+| Field | Description |
+|---|---|
+| `moneda` | Invoice currency (ARS, USD, etc.) |
+| `neto_total` | Net subtotal / total before taxes |
+| `neto_gravado_21` | Taxable base at 21% VAT rate |
+| `neto_gravado_1050` | Taxable base at 10.5% VAT rate |
+| `neto_gravado_27` | Taxable base at 27% VAT rate |
+| `no_gravado` | Exempt / non-taxable amounts |
+| `iva_21` | VAT at 21% |
+| `iva_1050` | VAT at 10.5% |
+| `iva_27` | VAT at 27% |
+| `percepciones_iva` | VAT withholdings |
+| `percepciones_ganancias` | Income tax withholdings |
+| `percepciones_iibb` | Gross income tax withholdings |
+| `total` | Total invoice amount |
+| `confidence` | Overall extraction confidence (`high / medium / low`) |
 
-The prompt teaches the model three fiscal relationships that must always
-hold:
+---
 
-    1. neto_total = neto_gravado_21 + neto_gravado_1050 + neto_gravado_27 + no_gravado
+## 🛠️ Installation
 
-    2. iva_21   = neto_gravado_21   × 0.21
-       iva_1050 = neto_gravado_1050 × 0.105
-       iva_27   = neto_gravado_27   × 0.27
+### Requirements
 
-    3. total = neto_total + iva_21 + iva_1050 + iva_27
-               + percepciones_iva + percepciones_ganancias + percepciones_iibb
+- Python 3.10+
+- [Groq](https://console.groq.com/) account (API key)
+- [Google AI Studio](https://aistudio.google.com/) account (API key for Gemini)
 
-If document values do not satisfy these rules, the model must report
-them exactly as shown and lower `confidence` to `"low"` --- **never
-invent values to force formulas to match**.
+### Dependencies
 
-### LLM output
+```bash
+pip install langchain-core langchain-groq langchain-google-genai
+pip install langgraph
+pip install pdfplumber
+pip install python-doctr[torch]   # or [tf] if you prefer TensorFlow
+pip install pandas openpyxl
+```
 
-The model returns strictly valid JSON (no markdown, no extra text):
+### Configuration
 
-``` json
-{
-  "moneda": "ars",
-  "confidence": "high",
-  "neto_total": 64236.81,
-  "neto_gravado_21": 64236.81,
-  "neto_gravado_1050": null,
-  "neto_gravado_27": null,
-  "no_gravado": null,
-  "iva_21": 13489.73,
-  "iva_1050": null,
-  "iva_27": null,
-  "percepciones_iva": null,
-  "percepciones_ganancias": null,
-  "percepciones_iibb": null,
-  "total": 77726.54
+Set your API keys as environment variables:
+
+```bash
+export GROQ_API_KEY="your-groq-api-key"
+export GOOGLE_API_KEY="your-google-api-key"
+```
+
+Then read them in the script:
+
+```python
+import os
+groq_api_key = os.environ["GROQ_API_KEY"]
+google_api_key = os.environ["GOOGLE_API_KEY"]
+```
+
+> ⚠️ **Never hardcode API keys in your source code or commit them to the repository.**
+
+---
+
+## 🚀 Usage
+
+### Process a single invoice
+
+```python
+result = app.invoke({
+    "messages": [HumanMessage(content="Extract the data from this invoice:")],
+    "pdf_path": "path/to/your/invoice.pdf",
+    "agents_config": AGENTS_CONFIG
+})
+
+# Export to Excel
+df = pd.DataFrame(result["resultados_parseados_etapa2"])
+df.to_excel("result.xlsx", index=False)
+```
+
+### Batch processing
+
+```python
+from pathlib import Path
+
+folder_path = "path/to/invoices/folder"
+pdf_files = [str(p) for p in Path(folder_path).glob("*.pdf")]
+
+inputs = [
+    {
+        "messages": [HumanMessage(content="Extract the data from this invoice:")],
+        "pdf_path": pdf_path,
+        "agents_config": AGENTS_CONFIG
+    }
+    for pdf_path in pdf_files
+]
+
+results = app.batch(inputs, config={"max_concurrency": 3})
+```
+
+---
+
+## 📁 Project Structure
+
+```
+invoice-parser/
+│
+├── facturas_parser.py                      # Main script
+├── facturas_parser_system_prompt_v2.txt    # LLM system prompt
+├── graph.png                               # LangGraph architecture diagram
+├── README.md
+│
+├── invoices/                               # PDF input folder (not included in repo)
+│   └── *.pdf
+│
+└── results.xlsx                            # Generated output (not included in repo)
+```
+
+---
+
+## ⚙️ Agent Configuration
+
+```python
+AGENTS_CONFIG = {
+    "agent_1": {"temperature": 0.0, "prompt_path": "path/to/prompt.txt"},
+    "agent_2": {"temperature": 0.2, "prompt_path": "path/to/prompt.txt"},
+    "agent_3": {"temperature": 0.4, "prompt_path": "path/to/prompt.txt"},
 }
 ```
 
-------------------------------------------------------------------------
+Groq models are tried in order, with automatic fallback on rate limit errors:
 
-## ✅ Validator node: second validation layer
-
-Even though the LLM is already instructed to verify mathematical
-relationships, the `verificador_matematico` node rechecks them in Python
-with a **\$0.10 tolerance** to account for rounding differences. If
-inconsistencies are detected, they are listed in `errores_validacion`
-and `valido: False` is set.
-
-This adds a model‑independent safety layer: even if the LLM makes a
-rounding mistake or hallucination, the validator catches it.
-
-------------------------------------------------------------------------
-
-## 🔁 Automatic fallback between models
-
-If a Groq model fails due to rate limits or technical issues, the agent
-automatically tries the next one:
-
-``` python
-modelos = [
+```python
+models = [
     "llama-3.3-70b-versatile",
     "meta-llama/llama-4-scout-17b-16e-instruct",
-    "qwen/qwen3-32b",
-    "llama-3.1-8b-instant"
+    "llama-3.1-8b-instant",
+    ...
 ]
 ```
 
-The agent also detects rate limits embedded inside response text (not
-only exceptions), searching for phrases like `"rate limit"` or
-`"error code: 429"`.
+---
 
-------------------------------------------------------------------------
+## 📦 Models Used
 
-## ⚙️ Installation and usage
+| Provider | Models | Usage |
+|---|---|---|
+| Groq | LLaMA 3.3 70B, LLaMA 4 Scout, LLaMA 3.1 8B | Text-based extraction (Agents 1–3) |
+| Google Gemini | gemini-2.5-flash | Multimodal extraction directly from PDF (Agent 4) |
 
-### 1. Install dependencies
+---
 
-``` bash
-pip install langchain-groq pdfplumber langgraph langchain-core pandas openpyxl
-```
+## 🗺️ Roadmap
 
-### 2. Get a Groq API key
+### v2 — Mathematical Validator & Consensus
 
-Free at https://console.groq.com
+The next version will close the ensemble loop with two additions:
 
-Configure it in the notebook:
+**Mathematical validator**: after parsing, each extraction will be checked for internal consistency:
+- `iva_21 ≈ neto_gravado_21 × 0.21`
+- `iva_1050 ≈ neto_gravado_1050 × 0.105`
+- `iva_27 ≈ neto_gravado_27 × 0.27`
+- `neto_total ≈ sum of all net components`
+- `total ≈ neto_total + all VATs + all withholdings`
 
-``` python
-groq_api_key = "your_api_key_here"
-```
+Extractions that fail validation will be flagged or discarded before the consensus step.
 
-### 3. Place invoices
+**Consensus / voting layer**: the 6 validated extractions will be aggregated into a single final result. The planned approach prioritizes mathematically valid extractions and uses majority voting or median values for numeric fields where agents disagree.
 
-Create a `facts/` folder and place the PDFs inside.
-
-### 4. Run the notebook
-
-Run all cells. At the end, `output.xlsx` will be generated with results.
-
-------------------------------------------------------------------------
-
-## 📊 Output per invoice
-
-``` python
-{
-  'moneda': 'ARS',
-  'confidence': 'high',
-  'neto_total': 64236.81,
-  'neto_gravado_21': 64236.81,
-  'neto_gravado_1050': None,
-  'neto_gravado_27': None,
-  'no_gravado': None,
-  'iva_21': 13489.73,
-  'iva_1050': None,
-  'iva_27': None,
-  'percepciones_iva': None,
-  'percepciones_ganancias': None,
-  'percepciones_iibb': None,
-  'total': 77726.54,
-  'errores_validacion': [],
-  'valido': True,
-  'FileName': '2026-02-01_..._BONVECCHIATO.pdf'
-}
-```
-
-------------------------------------------------------------------------
-
-## ⚠️ Special handled cases
-
-  -----------------------------------------------------------------------
-  Situation                           Behavior
-  ----------------------------------- -----------------------------------
-  PDF without text (scanned)          Returns
-                                      `{"error": "pdf_sin_texto"}` and
-                                      continues
-
-  Groq rate limit                     Automatically switches to next
-                                      model
-
-  Technical error in model            Same fallback
-
-  JSON wrapped in backticks           Validator cleans before parsing
-
-  Real discrepancy in document        LLM reports values as‑is and lowers
-                                      confidence
-  -----------------------------------------------------------------------
-
-------------------------------------------------------------------------
-
-## 📁 Project structure
-
-    /
-    ├── FER_AGENT_COntable.ipynb
-    ├── facturas_parser (system_prompt).txt
-    ├── facts/
-    │   ├── factura1.pdf
-    │   └── factura2.pdf
-    └── output.xlsx
-
-------------------------------------------------------------------------
-
-## 🛠️ Stack
-
-  Tool             Role
-  ---------------- ---------------------------------
-  LangGraph        Graph‑based agent orchestration
-  Groq             High‑speed LLM inference
-  LangChain Core   Message types and abstractions
-  pdfplumber       PDF text extraction
-  pandas           Excel export
+---
